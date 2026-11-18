@@ -295,7 +295,7 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     if (msg) { e.textContent = msg; e.style.display = "block"; } else { e.style.display = "none"; }
   }
 
-  function updateUI(d) {
+  function updateUI(d, ts) {
     lastServer = d;
     var j = d.java || {};
     var p = j.players || d.players || {};
@@ -323,28 +323,71 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     st.textContent = online ? "オンライン" : "オフライン";
     st.className = "status " + (online ? "on" : "off");
     $("latency").textContent = j.latency != null ? j.latency + " ms" : "–";
-    $("updated").textContent = fmtTime(d.updatedAt ? Date.parse(d.updatedAt) || Date.now() : Date.now());
+    $("updated").textContent = fmtTime(ts || (d.updatedAt ? Date.parse(d.updatedAt) || Date.now() : Date.now()));
+  }
+
+  var LKEY = "syokupan-last-v1";
+  function loadCached() {
+    try {
+      var c = JSON.parse(sGet(LKEY) || "null");
+      if (c && c.d && typeof c.ts === "number") { updateUI(c.d, c.ts); return true; }
+    } catch (e) {}
+    return false;
+  }
+  var hasData = loadCached();
+  if (!hasData) $("name").textContent = "食パン サーバー";
+
+  // Render APIが応答しないとき、ZonSurvival APIの /v1/status で代用する
+  async function fallbackToZon(reason) {
+    try {
+      var st = await zfetch("/v1/status");
+      var total = firstNum(st.totalPlayers, st.total, st.playersOnline, st.online);
+      if (total == null) return false;
+      var up = st.proxyOnline !== false;
+      var now = Date.now();
+      showError("人数API " + reason + "。ZonSurvival APIの値を表示しています。");
+      $("online").textContent = up ? total : "–";
+      var el2 = $("status");
+      el2.textContent = (up ? "オンライン" : "オフライン") + "（ZonSurvival API）";
+      el2.className = "status " + (up ? "on" : "off");
+      $("latency").textContent = "–";
+      $("updated").textContent = fmtTime(now);
+      if (up) { history.push({ t: now, n: total }); pruneAndSave(); }
+      return true;
+    } catch (e2) { return false; }
   }
 
   async function poll() {
     try {
       var ctl = new AbortController();
-      var timer = setTimeout(function () { ctl.abort(); }, 60000); // Renderの起動待ち対策
+      var timer = setTimeout(function () { ctl.abort(); }, 15000); // 応答がなければZonSurvival APIへ切り替え
       var res = await fetch(API, { cache: "no-store", signal: ctl.signal });
       clearTimeout(timer);
       if (!res.ok) throw new Error("HTTP " + res.status);
       var d = await res.json();
       showError("");
-      updateUI(d);
+      var now = Date.now();
+      updateUI(d, now);
+      hasData = true;
+      sSet(LKEY, JSON.stringify({ d: d, ts: now }));
       var j = d.java || {};
       var on = d.online !== false && j.online !== false;
       var p = j.players || d.players || {};
       if (on && typeof p.online === "number") {
-        history.push({ t: Date.now(), n: p.online });
+        history.push({ t: now, n: p.online });
         pruneAndSave();
       }
     } catch (e) {
-      showError("データを取得できませんでした。しばらくしてからもう一度お試しください。(" + (e && e.message ? e.message : e) + ")");
+      var slow = e && e.name === "AbortError";
+      var reason = slow ? "応答がありません" : "取得できません(" + (e && e.message ? e.message : e) + ")";
+      var ok = await fallbackToZon(reason);
+      if (!ok) {
+        showError("人数APIもZonSurvival APIも取得できませんでした。自動で再試行します。");
+        var st = $("status");
+        st.textContent = "取得失敗";
+        st.className = "status off";
+        if (!hasData) { $("online").textContent = "–"; }
+      }
     }
     drawChart();
   }
@@ -422,6 +465,10 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     });
     segs.push(cur);
 
+    for (var gi = 1; gi < segs.length; gi++) {
+      var a = segs[gi - 1][segs[gi - 1].length - 1], b = segs[gi][0];
+      el("line", { x1: X(a.t), y1: Y(a.n), x2: X(b.t), y2: Y(b.n), stroke: "var(--accent)", "stroke-width": 1.5, "stroke-dasharray": "4 4", opacity: .55 }, svg);
+    }
     segs.forEach(function (s) {
       if (s.length > 1) {
         var d = s.map(function (p, i) { return (i ? "L" : "M") + X(p.t).toFixed(1) + " " + Y(p.n).toFixed(1); }).join(" ");
@@ -474,6 +521,12 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   $("chart").addEventListener("pointermove", hover);
   $("chart").addEventListener("pointerdown", hover);
   $("chart").addEventListener("pointerleave", leave);
+  var hideT = null;
+  $("chart").addEventListener("pointerup", function (ev) {
+    if (ev.pointerType === "mouse") return;
+    clearTimeout(hideT);
+    hideT = setTimeout(leave, 2500);
+  });
 
   /* ---------- range buttons ---------- */
   document.querySelectorAll(".range button").forEach(function (b) {
@@ -542,11 +595,22 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     var box = $("zfacts");
     box.textContent = "";
     if (!isObj(st)) return;
-    var labels = { ok: "状態", status: "状態", version: "バージョン", uptime: "稼働時間", updatedAt: "更新", timestamp: "更新", total: "合計" };
+    var labels = {
+      ok: "状態", status: "状態", version: "APIバージョン", schemaVersion: "スキーマ",
+      uptime: "稼働時間", updatedAt: "更新", timestamp: "更新", generatedAt: "更新", updated: "更新",
+      total: "合計", totalPlayers: "総プレイヤー数", serverCount: "サーバー数",
+      onlineServerCount: "稼働中サーバー", proxyOnline: "プロキシ", collectorErrors: "収集エラー"
+    };
+    var skip = { schemaVersion: 1 };
     Object.keys(st).forEach(function (k) {
       var v = st[k];
-      if (v == null || typeof v === "object") return;
-      if (typeof v === "boolean") v = v ? "はい" : "いいえ";
+      if (v == null || typeof v === "object" || skip[k]) return;
+      if (k === "proxyOnline" && typeof v === "boolean") v = v ? "オンライン" : "オフライン";
+      else if (typeof v === "boolean") v = v ? "はい" : "いいえ";
+      else if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z?$/.test(v)) {
+        var t = Date.parse(v);
+        if (!isNaN(t)) { var dd = new Date(t); v = fmtTime(t) + ":" + ("0" + dd.getSeconds()).slice(-2); }
+      }
       var d = h("div", null, labels[k] || k);
       d.appendChild(h("strong", null, String(v)));
       box.appendChild(d);
@@ -738,7 +802,9 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       var r = await req({});
       return r.ok && /html/i.test(r.headers.get("content-type") || "");
     } catch (e) {
-      try { await req({ mode: "no-cors" }); return true; } catch (e2) { return false; }
+      try { await req({ mode: "no-cors" }); return true; } catch (e2) {
+        try { await req({ mode: "no-cors" }); return true; } catch (e3) { return false; }
+      }
     }
   }
   async function checkSites() {
@@ -751,21 +817,27 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
 
   /* ---------- 手動更新 ---------- */
-  var refreshing = false;
+  function guarded(fn) {
+    var busy = null;
+    return function () {
+      if (busy) return busy;
+      busy = Promise.resolve().then(fn).catch(function () {}).then(function () { busy = null; });
+      return busy;
+    };
+  }
+  var gPoll = guarded(poll), gZon = guarded(pollZon), gSites = guarded(checkSites);
   async function refreshAll() {
-    if (refreshing) return;
-    refreshing = true;
     var b = $("refreshBtn");
     b.disabled = true; b.classList.add("spin");
-    try { await Promise.all([poll(), pollZon(), checkSites()]); }
-    finally { b.disabled = false; b.classList.remove("spin"); refreshing = false; }
+    try { await Promise.all([gPoll(), gZon(), gSites()]); }
+    finally { b.disabled = false; b.classList.remove("spin"); }
   }
   $("refreshBtn").addEventListener("click", refreshAll);
 
   /* ---------- start ---------- */
   drawChart();
-  refreshAll();
-  setInterval(function () { refreshAll(); }, POLL_MS);
+  gPoll(); gZon(); gSites();
+  setInterval(function () { gPoll(); gZon(); gSites(); }, POLL_MS);
 })();
 </script>
 </body>
