@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>サーバー状況</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f4f1ec;
+  --bar: #fffdf9;
+  --panel: #fffdf9;
+  --text: #2b2620;
+  --muted: #7a7064;
+  --line: #e4ddd2;
+  --grid: #ece6dc;
+  --accent: #c9800a;
+  --accent-soft: rgba(201,128,10,.14);
+  --ok: #2f8f4e;
+  --ng: #c2412d;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: #17191d;
+  --bar: #1e2127;
+  --panel: #1e2127;
+  --text: #ece8e1;
+  --muted: #9a958c;
+  --line: #2f333b;
+  --grid: #292d34;
+  --accent: #f0b43c;
+  --accent-soft: rgba(240,180,60,.16);
+  --ok: #5bd07f;
+  --ng: #ff7a66;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "Hiragino Sans", "Yu Gothic", Meiryo, sans-serif;
+  min-height: 100vh;
+  transition: background .2s, color .2s;
+}
+header {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--bar);
+  border-bottom: 1px solid var(--line);
+}
+.bar {
+  max-width: 960px; margin: 0 auto;
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 20px;
+}
+#icon {
+  width: 48px; height: 48px; flex: none;
+  border-radius: 8px;
+  image-rendering: pixelated;
+  background: var(--grid);
+  border: 1px solid var(--line);
+}
+.title { min-width: 0; flex: 1; }
+.title h1 {
+  margin: 0; font-size: 1.25rem; line-height: 1.3; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.title p { margin: 2px 0 0; font-size: .8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.theme {
+  flex: none; display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  border-radius: 999px; padding: 6px 12px 6px 8px;
+  font: inherit; font-size: .85rem; cursor: pointer;
+}
+.theme:focus-visible, .range button:focus-visible, .host:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme svg { width: 18px; height: 18px; }
+.theme .sun { display: none; }
+:root[data-theme="dark"] .theme .sun { display: block; }
+:root[data-theme="dark"] .theme .moon { display: none; }
+
+main { max-width: 960px; margin: 0 auto; padding: 28px 20px 48px; }
+
+.now { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 36px; margin-bottom: 24px; }
+.count { display: flex; align-items: baseline; gap: 8px; }
+.count b { font-size: 4rem; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+.count span { color: var(--muted); font-size: 1rem; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 28px; padding-bottom: 6px; }
+.facts div { font-size: .85rem; color: var(--muted); }
+.facts strong { display: block; color: var(--text); font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.status::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+.status.on::before { background: var(--ok); }
+.status.off::before { background: var(--ng); }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 16px 12px; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+.panel-head h2 { margin: 0; font-size: 1rem; }
+.range { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.range button {
+  border: 0; background: transparent; color: var(--muted);
+  font: inherit; font-size: .8rem; padding: 5px 12px; cursor: pointer;
+  border-right: 1px solid var(--line);
+}
+.range button:last-child { border-right: 0; }
+.range button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); font-weight: 700; }
+
+#chart { position: relative; width: 100%; height: 300px; touch-action: pan-y; }
+#chart svg { display: block; width: 100%; height: 100%; }
+#tip {
+  position: absolute; pointer-events: none; display: none;
+  background: var(--text); color: var(--bg);
+  font-size: .8rem; padding: 5px 9px; border-radius: 6px; white-space: nowrap;
+  transform: translate(-50%, -100%);
+}
+.note { margin: 10px 4px 0; font-size: .78rem; color: var(--muted); line-height: 1.6; }
+.host { font: inherit; background: none; border: 0; color: inherit; padding: 0; cursor: pointer; text-decoration: underline dotted; }
+#err { display: none; margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--ng); color: var(--ng); font-size: .85rem; }
+
+.sec { margin-top: 20px; }
+.sec h2 { margin: 0 0 12px; font-size: 1rem; display: flex; align-items: baseline; gap: 8px; }
+.sec h2 small { color: var(--muted); font-weight: 500; font-size: .85rem; }
+.zfacts { display: flex; flex-wrap: wrap; gap: 6px 28px; margin: 0 0 14px; }
+.zfacts div { font-size: .8rem; color: var(--muted); }
+.zfacts strong { display: block; color: var(--text); font-size: .95rem; font-weight: 700; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.srv { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.srv h3 { margin: 0 0 4px; font-size: .95rem; display: flex; align-items: center; gap: 6px; }
+.srv .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.srv .dot.on { background: var(--ok); }
+.srv .dot.off { background: var(--ng); }
+.srv .num { font-size: 1.6rem; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.srv .num small { font-size: .8rem; color: var(--muted); font-weight: 500; }
+.srv p { margin: 2px 0 0; font-size: .78rem; color: var(--muted); }
+.srv[role="button"] { cursor: pointer; }
+.srv[role="button"]:hover, .srv.sel { border-color: var(--accent); }
+.srv[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#srvDetail { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+#srvDetail h3 { margin: 0 0 8px; font-size: .95rem; }
+#srvDetail dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 18px; font-size: .85rem; }
+#srvDetail dt { color: var(--muted); }
+#srvDetail dd { margin: 0; word-break: break-all; }
+.chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.chips li { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px 3px 4px; font-size: .85rem; }
+.chips img { width: 20px; height: 20px; border-radius: 4px; image-rendering: pixelated; }
+.chips li span { color: var(--muted); font-size: .75rem; }
+.empty { color: var(--muted); font-size: .85rem; margin: 0; }
+@media (max-width: 560px) {
+  .count b { font-size: 3.2rem; }
+  #chart { height: 240px; }
+  .theme span { display: none; }
+  .theme { padding: 6px 8px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <img id="icon" alt="サーバーアイコン" width="48" height="48">
+    <div class="title">
+      <h1 id="name">読み込み中…</h1>
+      <p id="sub">&nbsp;</p>
+    </div>
+    <button class="theme" id="themeBtn" type="button" aria-label="テーマを切り替える">
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <span id="themeLabel">ダーク</span>
+    </button>
+  </div>
+</header>
+
+<main>
+  <p id="err" role="alert"></p>
+
+  <section class="now" aria-live="polite">
+    <div class="count"><b id="online">–</b><span>/ <span id="max">–</span> 人</span></div>
+    <div class="facts">
+      <div>状態<strong id="status" class="status">確認中</strong></div>
+      <div>応答<strong id="latency">–</strong></div>
+      <div>期間内の最高<strong id="peak">–</strong></div>
+      <div>最終更新<strong id="updated">–</strong></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>参加人数の推移</h2>
+      <div class="range" role="group" aria-label="表示期間">
+        <button type="button" data-min="30" aria-pressed="false">30分</button>
+        <button type="button" data-min="60" aria-pressed="true">1時間</button>
+        <button type="button" data-min="360" aria-pressed="false">6時間</button>
+        <button type="button" data-min="1440" aria-pressed="false">24時間</button>
+      </div>
+    </div>
+    <div id="chart"><div id="tip"></div></div>
+    <p class="note">
+      APIは現在の人数しか返さないため、このページを開いている間30秒ごとに取得して記録しています（このブラウザに最大24時間分を保存）。
+      接続先: <button class="host" id="host" type="button" title="クリックでコピー">–</button>
+    </p>
+  </section>
+  <section class="panel sec" id="srvPanel" hidden>
+    <h2>サーバー一覧 <small id="srvNote"></small></h2>
+    <div class="zfacts" id="zfacts"></div>
+    <div class="grid" id="servers"></div>
+    <div id="srvDetail" hidden></div>
+  </section>
+
+  <section class="panel sec" id="plPanel" hidden>
+    <h2>オンラインプレイヤー <small id="plCount"></small></h2>
+    <ul class="chips" id="players"></ul>
+    <p class="empty" id="plEmpty" hidden>現在オンラインのプレイヤーはいません</p>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var API = "https://minecraft-syokupanserver-api.onrender.com/";
+  var POLL_MS = 30000;
+  var GAP_MS = 5 * 60 * 1000;      // これ以上空いたら線をつなげない
+  var KEEP_MS = 24 * 3600 * 1000;
+  var HKEY = "syokupan-history-v1";
+  var TKEY = "syokupan-theme";
+  var NS = "http://www.w3.org/2000/svg";
+
+  var $ = function (id) { return document.getElementById(id); };
+  var history = [];
+  var rangeMin = 60;
+  var lastServer = null;
+
+  /* ---------- storage helpers ---------- */
+  function sGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function sSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  /* ---------- theme ---------- */
+  function applyTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    $("themeLabel").textContent = t === "dark" ? "ライト" : "ダーク";
+    $("themeBtn").setAttribute("aria-label", t === "dark" ? "ライトテーマに切り替える" : "ダークテーマに切り替える");
+    drawChart();
+  }
+  var saved = sGet(TKEY);
+  var initial = saved || (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.setAttribute("data-theme", initial);
+  $("themeBtn").addEventListener("click", function () {
+    var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    sSet(TKEY, next);
+    applyTheme(next);
+  });
+  $("themeLabel").textContent = initial === "dark" ? "ライト" : "ダーク";
+
+  /* ---------- history ---------- */
+  try {
+    var raw = JSON.parse(sGet(HKEY) || "[]");
+    if (Array.isArray(raw)) history = raw.filter(function (p) { return p && typeof p.t === "number" && typeof p.n === "number"; });
+  } catch (e) { history = []; }
+  function pruneAndSave() {
+    var limit = Date.now() - KEEP_MS;
+    history = history.filter(function (p) { return p.t >= limit; });
+    if (history.length > 3000) history = history.slice(-3000);
+    sSet(HKEY, JSON.stringify(history));
+  }
+
+  /* ---------- server info ---------- */
+  function serverName(motd) {
+    var s = (motd || "").replace(/§./g, "").trim();
+    var part = s.split(/\s{2,}|\(|（| \| /)[0].trim();
+    return part || s || "Minecraft サーバー";
+  }
+  function fmtTime(ts) {
+    var d = new Date(ts);
+    return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+  }
+  function showError(msg) {
+    var e = $("err");
+    if (msg) { e.textContent = msg; e.style.display = "block"; } else { e.style.display = "none"; }
+  }
+
+  function updateUI(d) {
+    lastServer = d;
+    var j = d.java || {};
+    var p = j.players || d.players || {};
+    var online = d.online !== false && j.online !== false;
+
+    var name = serverName(j.motd && j.motd.clean);
+    $("name").textContent = name;
+    document.title = name + " - サーバー状況";
+
+    var ver = j.version && j.version.name ? "Java " + j.version.name : "";
+    var host = d.host || "";
+    $("sub").textContent = [ver, host].filter(Boolean).join("  |  ");
+    $("host").textContent = host || "–";
+
+    if (j.favicon) {
+      $("icon").src = j.favicon;
+      var link = document.querySelector("link[rel=icon]");
+      if (!link) { link = document.createElement("link"); link.rel = "icon"; document.head.appendChild(link); }
+      link.href = j.favicon;
+    }
+
+    $("online").textContent = online ? (p.online != null ? p.online : "–") : "–";
+    $("max").textContent = p.max != null ? p.max : "–";
+    var st = $("status");
+    st.textContent = online ? "オンライン" : "オフライン";
+    st.className = "status " + (online ? "on" : "off");
+    $("latency").textContent = j.latency != null ? j.latency + " ms" : "–";
+    $("updated").textContent = fmtTime(d.updatedAt ? Date.parse(d.updatedAt) || Date.now() : Date.now());
+  }
+
+  async function poll() {
+    try {
+      var ctl = new AbortController();
+      var timer = setTimeout(function () { ctl.abort(); }, 60000); // Renderの起動待ち対策
+      var res = await fetch(API, { cache: "no-store", signal: ctl.signal });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var d = await res.json();
+      showError("");
+      updateUI(d);
+      var j = d.java || {};
+      var on = d.online !== false && j.online !== false;
+      var p = j.players || d.players || {};
+      if (on && typeof p.online === "number") {
+        history.push({ t: Date.now(), n: p.online });
+        pruneAndSave();
+      }
+    } catch (e) {
+      showError("データを取得できませんでした。しばらくしてからもう一度お試しください。(" + (e && e.message ? e.message : e) + ")");
+    }
+    drawChart();
+  }
+
+  /* ---------- chart (plain SVG) ---------- */
+  function el(name, attrs, parent) {
+    var n = document.createElementNS(NS, name);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+  function niceStep(max) {
+    var steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+    for (var i = 0; i < steps.length; i++) if (max / steps[i] <= 5) return steps[i];
+    return 1000;
+  }
+
+  var view = null; // 現在描画中の座標情報（ホバー用）
+
+  function drawChart() {
+    var box = $("chart");
+    var old = box.querySelector("svg");
+    if (old) box.removeChild(old);
+
+    var W = box.clientWidth, H = box.clientHeight;
+    if (!W || !H) return;
+    var m = { l: 40, r: 14, t: 14, b: 28 };
+    var iw = W - m.l - m.r, ih = H - m.t - m.b;
+
+    var now = Date.now();
+    var t0 = now - rangeMin * 60000;
+    var pts = history.filter(function (p) { return p.t >= t0; });
+
+    var maxV = 1;
+    pts.forEach(function (p) { if (p.n > maxV) maxV = p.n; });
+    var step = niceStep(maxV);
+    var yMax = Math.ceil(maxV / step) * step;
+    if (yMax === maxV && maxV > 0 && maxV % step === 0 && pts.length) yMax = maxV + step;
+
+    var X = function (t) { return m.l + (t - t0) / (now - t0) * iw; };
+    var Y = function (v) { return m.t + ih - v / yMax * ih; };
+
+    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "参加人数の折れ線グラフ" }, box);
+    box.insertBefore(svg, $("tip"));
+
+    // y grid + labels
+    for (var v = 0; v <= yMax; v += step) {
+      var y = Y(v);
+      el("line", { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+      var lb = el("text", { x: m.l - 8, y: y + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }, svg);
+      lb.textContent = v;
+    }
+    // x labels
+    var ticks = W < 480 ? 3 : 5;
+    for (var i = 0; i <= ticks; i++) {
+      var tt = t0 + (now - t0) * i / ticks;
+      var x = X(tt);
+      var anchor = i === 0 ? "start" : (i === ticks ? "end" : "middle");
+      var xl = el("text", { x: x, y: H - 8, "text-anchor": anchor, "font-size": 11, fill: "var(--muted)" }, svg);
+      xl.textContent = fmtTime(tt);
+    }
+
+    if (!pts.length) {
+      var em = el("text", { x: W / 2, y: H / 2, "text-anchor": "middle", "font-size": 13, fill: "var(--muted)" }, svg);
+      em.textContent = "記録を取得中です。ページを開いたままお待ちください";
+      view = null;
+      return;
+    }
+
+    // segments (gap-aware)
+    var segs = [], cur = [];
+    pts.forEach(function (p, idx) {
+      if (idx > 0 && p.t - pts[idx - 1].t > GAP_MS) { segs.push(cur); cur = []; }
+      cur.push(p);
+    });
+    segs.push(cur);
+
+    segs.forEach(function (s) {
+      if (s.length > 1) {
+        var d = s.map(function (p, i) { return (i ? "L" : "M") + X(p.t).toFixed(1) + " " + Y(p.n).toFixed(1); }).join(" ");
+        var area = d + " L" + X(s[s.length - 1].t).toFixed(1) + " " + Y(0) + " L" + X(s[0].t).toFixed(1) + " " + Y(0) + " Z";
+        el("path", { d: area, fill: "var(--accent-soft)", stroke: "none" }, svg);
+        el("path", { d: d, fill: "none", stroke: "var(--accent)", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+      } else {
+        el("circle", { cx: X(s[0].t), cy: Y(s[0].n), r: 3.5, fill: "var(--accent)" }, svg);
+      }
+    });
+
+    // latest point marker
+    var last = pts[pts.length - 1];
+    el("circle", { cx: X(last.t), cy: Y(last.n), r: 4.5, fill: "var(--accent)", stroke: "var(--panel)", "stroke-width": 2 }, svg);
+
+    // hover elements
+    var vline = el("line", { y1: m.t, y2: m.t + ih, stroke: "var(--muted)", "stroke-width": 1, "stroke-dasharray": "3 3", visibility: "hidden" }, svg);
+    var vdot = el("circle", { r: 5, fill: "var(--accent)", stroke: "var(--panel)", "stroke-width": 2, visibility: "hidden" }, svg);
+
+    var peak = 0; pts.forEach(function (p) { if (p.n > peak) peak = p.n; });
+    $("peak").textContent = peak + " 人";
+
+    view = { pts: pts, X: X, Y: Y, m: m, W: W, vline: vline, vdot: vdot };
+  }
+
+  var tip = $("tip");
+  function hover(ev) {
+    if (!view) return;
+    var rect = $("chart").getBoundingClientRect();
+    var mx = ev.clientX - rect.left;
+    var best = null, bd = Infinity;
+    view.pts.forEach(function (p) {
+      var dd = Math.abs(view.X(p.t) - mx);
+      if (dd < bd) { bd = dd; best = p; }
+    });
+    if (!best) return;
+    var x = view.X(best.t), y = view.Y(best.n);
+    view.vline.setAttribute("x1", x); view.vline.setAttribute("x2", x); view.vline.setAttribute("visibility", "visible");
+    view.vdot.setAttribute("cx", x); view.vdot.setAttribute("cy", y); view.vdot.setAttribute("visibility", "visible");
+    tip.textContent = fmtTime(best.t) + "  " + best.n + " 人";
+    tip.style.display = "block";
+    var tx = Math.min(Math.max(x, 50), view.W - 50);
+    tip.style.left = tx + "px";
+    tip.style.top = (y - 10) + "px";
+  }
+  function leave() {
+    tip.style.display = "none";
+    if (view) { view.vline.setAttribute("visibility", "hidden"); view.vdot.setAttribute("visibility", "hidden"); }
+  }
+  $("chart").addEventListener("pointermove", hover);
+  $("chart").addEventListener("pointerdown", hover);
+  $("chart").addEventListener("pointerleave", leave);
+
+  /* ---------- range buttons ---------- */
+  document.querySelectorAll(".range button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      rangeMin = parseInt(b.getAttribute("data-min"), 10);
+      document.querySelectorAll(".range button").forEach(function (o) { o.setAttribute("aria-pressed", o === b ? "true" : "false"); });
+      drawChart();
+    });
+  });
+
+  /* ---------- copy host ---------- */
+  $("host").addEventListener("click", function () {
+    var h = $("host").textContent;
+    if (!h || h === "–" || !navigator.clipboard) return;
+    navigator.clipboard.writeText(h).then(function () {
+      var o = $("host").textContent;
+      $("host").textContent = "コピーしました";
+      setTimeout(function () { $("host").textContent = o; }, 1200);
+    }).catch(function () {});
+  });
+
+  window.addEventListener("resize", drawChart);
+
+  /* ---------- ZonSurvival Status API ---------- */
+  var ZAPI = "https://api.zonsurvival.net";
+
+  function zfetch(path) {
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort(); }, 20000);
+    return fetch(ZAPI + path, { cache: "no-store", signal: ctl.signal }).then(function (r) {
+      clearTimeout(timer);
+      if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+      return r.json();
+    });
+  }
+  function h(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function isObj(v) { return v && typeof v === "object" && !Array.isArray(v); }
+  function firstNum() {
+    for (var i = 0; i < arguments.length; i++) if (typeof arguments[i] === "number") return arguments[i];
+    return null;
+  }
+  // 配列 / {servers:[...]} / {id: {...}} のどれでも配列に直す
+  function toList(d, keys) {
+    if (Array.isArray(d)) return d;
+    if (!isObj(d)) return [];
+    for (var i = 0; i < keys.length; i++) {
+      var v = d[keys[i]];
+      if (Array.isArray(v)) return v;
+      if (isObj(v)) return mapToList(v);
+    }
+    for (var k in d) if (Array.isArray(d[k])) return d[k];
+    return mapToList(d);
+  }
+  function mapToList(o) {
+    var vals = Object.keys(o).map(function (k) { return o[k]; });
+    if (!vals.length || !vals.every(isObj)) return [];
+    return Object.keys(o).map(function (k) { var x = o[k]; return x.id == null && x.name == null ? Object.assign({ id: k }, x) : x; });
+  }
+
+  function renderFacts(st) {
+    var box = $("zfacts");
+    box.textContent = "";
+    if (!isObj(st)) return;
+    var labels = { ok: "状態", status: "状態", version: "バージョン", uptime: "稼働時間", updatedAt: "更新", timestamp: "更新", total: "合計" };
+    Object.keys(st).forEach(function (k) {
+      var v = st[k];
+      if (v == null || typeof v === "object") return;
+      if (typeof v === "boolean") v = v ? "はい" : "いいえ";
+      var d = h("div", null, labels[k] || k);
+      d.appendChild(h("strong", null, String(v)));
+      box.appendChild(d);
+    });
+  }
+
+  function renderServers(list) {
+    var box = $("servers");
+    box.textContent = "";
+    list.forEach(function (s) {
+      if (!isObj(s)) return;
+      var pl = s.players;
+      var on = firstNum(
+        typeof pl === "number" ? pl : null,
+        isObj(pl) ? firstNum(pl.online, pl.count, pl.current) : null,
+        Array.isArray(pl) ? pl.length : null,
+        s.playersOnline, s.online_players, s.onlinePlayers, s.playerCount, s.player_count,
+        typeof s.online === "number" ? s.online : null);
+      var max = firstNum(isObj(pl) ? pl.max : null, s.maxPlayers, s.max_players, s.playersMax, s.max);
+      var up = null;
+      if (typeof s.online === "boolean") up = s.online;
+      else if (typeof s.up === "boolean") up = s.up;
+      else if (typeof s.status === "string") up = /^(online|up|ok|running|true)$/i.test(s.status);
+      var name = s.name || s.displayName || s.title || s.id || "サーバー";
+      var ver = isObj(s.version) ? s.version.name : (typeof s.version === "string" ? s.version : "");
+      var lat = firstNum(s.latency, s.ping);
+
+      var sid = s.id != null ? s.id : (s.name || null);
+      var card = h("div", "srv");
+      if (sid != null) {
+        card.setAttribute("role", "button");
+        card.tabIndex = 0;
+        card.title = "クリックで詳細を表示";
+        if (String(sid) === selectedId) card.classList.add("sel");
+        var open = function () { showDetail(String(sid), String(s.name || s.displayName || sid)); };
+        card.addEventListener("click", open);
+        card.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+      }
+      var t = h("h3");
+      t.appendChild(h("span", "dot" + (up === true ? " on" : up === false ? " off" : "")));
+      t.appendChild(h("span", null, String(name)));
+      card.appendChild(t);
+      var num = h("div", "num", on != null ? String(on) : "–");
+      if (max != null) num.appendChild(h("small", null, " / " + max + " 人"));
+      else num.appendChild(h("small", null, " 人"));
+      card.appendChild(num);
+      var meta = [ver, lat != null ? lat + " ms" : ""].filter(Boolean).join("  |  ");
+      if (meta) card.appendChild(h("p", null, meta));
+      box.appendChild(card);
+    });
+  }
+
+  function renderPlayers(d) {
+    var list = toList(d, ["players", "list", "data"]);
+    var box = $("players");
+    box.textContent = "";
+    list.forEach(function (p) {
+      var name = typeof p === "string" ? p : (isObj(p) ? (p.name || p.username || p.player || p.displayName || p.id) : null);
+      if (!name) return;
+      var li = h("li");
+      if (/^[A-Za-z0-9_.]{2,17}$/.test(name)) {
+        var img = document.createElement("img");
+        img.alt = "";
+        img.loading = "lazy";
+        img.src = "https://mc-heads.net/avatar/" + encodeURIComponent(name) + "/40";
+        img.onerror = function () { img.style.display = "none"; };
+        li.appendChild(img);
+      }
+      li.appendChild(document.createTextNode(String(name)));
+      var where = isObj(p) ? (p.server || p.serverId || p.world) : null;
+      if (where) li.appendChild(h("span", null, String(where)));
+      box.appendChild(li);
+    });
+    var cnt = isObj(d) ? firstNum(d.count, d.total, d.online) : null;
+    if (cnt == null) cnt = box.children.length;
+    $("plCount").textContent = cnt + " 人";
+    $("plEmpty").hidden = box.children.length > 0;
+  }
+
+  var selectedId = null;
+  function flatten(v, prefix, out, depth) {
+    if (v == null) return;
+    if (Array.isArray(v)) {
+      if (v.every(function (x) { return x == null || typeof x !== "object"; })) out.push([prefix, v.length ? v.join(", ") : "なし"]);
+      else out.push([prefix, v.length + " 件"]);
+      return;
+    }
+    if (typeof v === "object") {
+      if (depth >= 3) return;
+      Object.keys(v).forEach(function (k) { flatten(v[k], prefix ? prefix + "." + k : k, out, depth + 1); });
+      return;
+    }
+    if (typeof v === "string" && v.length > 120) return; // 画像データなど
+    if (typeof v === "boolean") v = v ? "はい" : "いいえ";
+    out.push([prefix, String(v)]);
+  }
+  async function showDetail(id, title) {
+    selectedId = id;
+    var box = $("srvDetail");
+    box.hidden = false;
+    box.textContent = "";
+    box.appendChild(h("p", "empty", "読み込み中…"));
+    document.querySelectorAll(".srv").forEach(function (c) { c.classList.toggle("sel", c.querySelector("h3 span:last-child").textContent === title); });
+    try {
+      var d = await zfetch("/v1/servers/" + encodeURIComponent(id));
+      if (selectedId !== id) return;
+      var rows = [];
+      flatten(d, "", rows, 0);
+      box.textContent = "";
+      box.appendChild(h("h3", null, title + " の詳細"));
+      var dl = h("dl");
+      rows.forEach(function (r) { dl.appendChild(h("dt", null, r[0] || "値")); dl.appendChild(h("dd", null, r[1])); });
+      box.appendChild(rows.length ? dl : h("p", "empty", "表示できるデータがありません"));
+    } catch (e) {
+      box.textContent = "";
+      box.appendChild(h("p", "empty", "詳細を取得できませんでした: " + (e && e.message ? e.message : e)));
+    }
+  }
+
+  async function checkHealth() {
+    var box = $("zfacts");
+    var old = document.getElementById("zhealth");
+    if (old) old.remove();
+    var ok = false;
+    try {
+      var ctl = new AbortController();
+      var timer = setTimeout(function () { ctl.abort(); }, 15000);
+      var r = await fetch(ZAPI + "/healthz", { cache: "no-store", signal: ctl.signal });
+      clearTimeout(timer);
+      ok = r.ok;
+    } catch (e) { ok = false; }
+    var d = h("div", null, "API");
+    d.id = "zhealth";
+    d.appendChild(h("strong", null, ok ? "正常" : "応答なし"));
+    box.insertBefore(d, box.firstChild);
+  }
+
+  async function pollZon() {
+    var r = await Promise.allSettled([zfetch("/v1/status"), zfetch("/v1/servers"), zfetch("/v1/players")]);
+    var errs = [];
+    r.forEach(function (x) { if (x.status === "rejected") errs.push(x.reason && x.reason.message ? x.reason.message : String(x.reason)); });
+
+    if (r[0].status === "fulfilled") renderFacts(r[0].value);
+    await checkHealth();
+    $("srvPanel").hidden = false;
+    if (r[1].status === "fulfilled") {
+      renderServers(toList(r[1].value, ["servers", "data", "list"]));
+      $("srvPanel").hidden = false;
+    }
+    if (r[2].status === "fulfilled") {
+      renderPlayers(r[2].value);
+      $("plPanel").hidden = false;
+    }
+    if (r[0].status === "fulfilled" || r[1].status === "fulfilled") $("srvPanel").hidden = false;
+    if (errs.length) {
+      $("srvPanel").hidden = false;
+      $("srvNote").textContent = "一部取得できませんでした: " + errs.join(" / ");
+    } else {
+      $("srvNote").textContent = "";
+    }
+  }
+
+  /* ---------- start ---------- */
+  drawChart();
+  poll();
+  pollZon();
+  setInterval(poll, POLL_MS);
+  setInterval(pollZon, POLL_MS);
+})();
+</script>
+</body>
+</html>
