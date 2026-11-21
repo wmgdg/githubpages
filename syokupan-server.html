@@ -20,6 +20,7 @@
   --accent-soft: rgba(201,128,10,.14);
   --ok: #2f8f4e;
   --ng: #c2412d;
+  --warn: #d9a000;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -34,6 +35,7 @@
   --accent-soft: rgba(240,180,60,.16);
   --ok: #5bd07f;
   --ng: #ff7a66;
+  --warn: #f0b43c;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -157,6 +159,39 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chips img { width: 20px; height: 20px; border-radius: 4px; image-rendering: pixelated; }
 .chips li span { color: var(--muted); font-size: .75rem; }
 .empty { color: var(--muted); font-size: .85rem; margin: 0; }
+.blocks { display: grid; gap: 22px; }
+.blk h3 { margin: 0 0 8px; font-size: .95rem; }
+.blk .kv { margin: 0 0 10px; display: grid; grid-template-columns: max-content 1fr; gap: 3px 18px; font-size: .85rem; }
+.blk .kv dt { color: var(--muted); }
+.blk .kv dd { margin: 0; word-break: break-all; }
+.mini { position: relative; width: 100%; height: 190px; }
+.mini svg { display: block; width: 100%; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 0 0; font-size: .78rem; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.blk details { margin-top: 8px; font-size: .78rem; color: var(--muted); }
+.blk pre { margin: 6px 0 0; max-height: 200px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: .72rem; color: var(--text); }
+.pdot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.pdot.on { background: var(--ok); }
+.pdot.off { background: var(--ng); }
+.pdot.warn { background: var(--warn); }
+.crow { display: grid; grid-template-columns: minmax(120px, 190px) 1fr 62px; grid-template-areas: "n m p"; gap: 4px 12px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+.crow:first-child { border-top: 0; }
+.cname { grid-area: n; min-width: 0; }
+.cname b { display: flex; align-items: center; gap: 7px; font-size: .88rem; }
+.cname small { display: block; margin-top: 2px; color: var(--muted); font-size: .72rem; line-height: 1.4; }
+.mid { grid-area: m; min-width: 0; }
+.cpct { grid-area: p; text-align: right; font-size: .82rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.strip { display: flex; gap: 2px; height: 22px; }
+.cell { flex: 1; min-width: 2px; border-radius: 2px; background: var(--line); cursor: pointer; }
+.cell.ok { background: var(--ok); }
+.cell.warn { background: var(--warn); }
+.cell.ng { background: var(--ng); }
+.cap { min-height: 1.2em; margin-top: 3px; font-size: .72rem; color: var(--muted); }
+.sech { margin: 16px 0 4px; font-size: .78rem; color: var(--muted); }
+.blk > div > .kv + .sech { margin-top: 12px; }
+@media (max-width: 560px) {
+  .crow { grid-template-columns: 1fr 62px; grid-template-areas: "n p" "m m"; }
+}
 @media (max-width: 560px) {
   .count b { font-size: 3.2rem; }
   #chart { height: 240px; }
@@ -222,6 +257,11 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <div class="grid" id="servers"></div>
     <div class="grid" id="sites"></div>
     <div id="srvDetail" hidden></div>
+  </section>
+
+  <section class="panel sec" id="stPanel">
+    <h2>詳細ステータス <small>status.zonsurvival.net</small></h2>
+    <div class="blocks" id="stBlocks"></div>
   </section>
 
   <section class="panel sec" id="plPanel" hidden>
@@ -777,7 +817,8 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   var SITES = [
     { name: "公式サイト", url: "https://zonsurvival.net/" },
     { name: "公式ステータス", url: "https://status.zonsurvival.net/" },
-    { name: "Webマップ", url: "https://map.zonsurvival.net/" }
+    { name: "Webマップ", url: "https://map.zonsurvival.net/" },
+    { name: "Webチャット", url: "https://chat.zonsurvival.net/" }
   ];
   var siteEls = SITES.map(function (site) {
     var a = h("a", "srv");
@@ -816,6 +857,268 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     }));
   }
 
+  /* ---------- status.zonsurvival.net のJSON ---------- */
+  var SAPI = "https://status.zonsurvival.net";
+  var COLORS = ["var(--accent)", "var(--ok)", "#4b8bd6", "#c264c9", "#e0644d", "#3fb8af", "#9a8c3a", "#8d8478"];
+  var popChart = null;
+
+  function sfetch(path) {
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort(); }, 20000);
+    return fetch(SAPI + path, { cache: "no-store", signal: ctl.signal }).then(function (r) {
+      clearTimeout(timer);
+      if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+      return r.json();
+    });
+  }
+  function two(n) { return ("0" + n).slice(-2); }
+  function fmtDT(s) {
+    var t = Date.parse(s);
+    if (isNaN(t)) return String(s);
+    var d = new Date(t);
+    return (d.getMonth() + 1) + "/" + d.getDate() + " " + two(d.getHours()) + ":" + two(d.getMinutes());
+  }
+  function dur(s) {
+    var t = Date.parse(s);
+    if (isNaN(t)) return "";
+    var m = Math.max(0, Math.floor((Date.now() - t) / 60000));
+    if (m >= 1440) return Math.floor(m / 1440) + "日" + Math.floor(m % 1440 / 60) + "時間";
+    if (m >= 60) return Math.floor(m / 60) + "時間" + (m % 60) + "分";
+    return m + "分";
+  }
+  var PHASES = { online: "オンライン", offline: "オフライン", degraded: "低下", starting: "起動中", restarting: "再起動中", unknown: "不明" };
+  function phaseJa(p) { return PHASES[p] || p || "不明"; }
+  function dotCls(c) {
+    if (c.phase === "degraded" || c.phase === "starting" || c.phase === "restarting") return "warn";
+    return c.online === false || c.phase === "offline" ? "off" : (c.online ? "on" : "");
+  }
+  function num(v) { return typeof v === "number" ? v : 0; }
+
+  // 1日分の集計 → 稼働率と色
+  function level(c) {
+    if (!isObj(c)) return { cls: "", pct: null };
+    var up = num(c.up), down = num(c.down), deg = num(c.degraded);
+    var den = up + down + deg;
+    if (!den) return { cls: "", pct: null };
+    var pct = up / den * 100;
+    return { cls: pct >= 99.9 ? "ok" : (pct >= 95 ? "warn" : "ng"), pct: pct, down: down, deg: deg };
+  }
+  function makeStrip(cells) {
+    var wrap = h("div");
+    var strip = h("div", "strip");
+    var cap = h("div", "cap", " ");
+    cells.forEach(function (c) {
+      var cell = h("span", "cell " + c.cls);
+      cell.title = c.tip;
+      cell.dataset.tip = c.tip;
+      strip.appendChild(cell);
+    });
+    strip.addEventListener("click", function (e) {
+      var t = e.target && e.target.dataset ? e.target.dataset.tip : null;
+      if (t) cap.textContent = t;
+    });
+    wrap.appendChild(strip);
+    wrap.appendChild(cap);
+    return wrap;
+  }
+  function dayStrip(days, getter, n) {
+    var keys = Object.keys(days).sort().slice(-n);
+    var up = 0, den = 0;
+    var cells = keys.map(function (k) {
+      var c = getter(days[k]), lv = level(c);
+      if (isObj(c)) { up += num(c.up); den += num(c.up) + num(c.down) + num(c.degraded); }
+      var lab = k.slice(5).replace("-", "/");
+      var tip = lv.pct == null ? lab + " データなし" : lab + " 稼働率 " + lv.pct.toFixed(2) + "%" + (lv.down ? " / 停止 " + lv.down : "") + (lv.deg ? " / 低下 " + lv.deg : "");
+      return { cls: lv.cls, tip: tip };
+    });
+    return { el: makeStrip(cells), pct: den ? up / den * 100 : null };
+  }
+  function minStrip(minutes, getter, n) {
+    var keys = Object.keys(minutes).sort().slice(-n);
+    var cells = keys.map(function (k) {
+      var c = getter(minutes[k]), cls = "", st = "データなし";
+      if (isObj(c)) {
+        if (num(c.down) > 0) { cls = "ng"; st = "停止"; }
+        else if (num(c.degraded) > 0) { cls = "warn"; st = "低下"; }
+        else if (num(c.up) > 0) { cls = "ok"; st = "稼働"; }
+        else { st = "不明"; }
+      }
+      var d = new Date(Date.parse(k));
+      return { cls: cls, tip: two(d.getHours()) + ":" + two(d.getMinutes()) + " " + st };
+    });
+    return makeStrip(cells);
+  }
+  function compRow(c, mid, pct) {
+    var row = h("div", "crow");
+    var nm = h("div", "cname");
+    var b = h("b");
+    b.appendChild(h("span", "pdot " + dotCls(c)));
+    b.appendChild(h("span", null, c.name || c.id));
+    nm.appendChild(b);
+    if (c.sub) nm.appendChild(h("small", null, c.sub));
+    row.appendChild(nm);
+    var m = h("div", "mid"); m.appendChild(mid); row.appendChild(m);
+    row.appendChild(h("div", "cpct", pct == null ? "–" : (pct >= 99.995 ? "100" : pct.toFixed(2)) + "%"));
+    return row;
+  }
+  function subText(c) {
+    var parts = [phaseJa(c.phase)];
+    var since = c.onlineSince || c.startedAt;
+    if (c.online !== false && since) parts.push("稼働 " + dur(since));
+    if (c.lastRestart && c.lastRestart.startedAt) parts.push("再起動 " + fmtDT(c.lastRestart.startedAt));
+    return parts.join(" · ");
+  }
+  function kv(rows) {
+    var dl = h("dl", "kv");
+    rows.forEach(function (r) { dl.appendChild(h("dt", null, r[0])); dl.appendChild(h("dd", null, r[1])); });
+    return dl;
+  }
+  function secHead(text) { return h("div", "sech", text); }
+
+  // 共通: 30日の帯 + 直近60分の帯
+  function renderComps(body, comps, days, minutes, dayGet, minGet, minutesInDetails) {
+    body.appendChild(secHead("過去30日の稼働率（タップで日ごとの値）"));
+    var list = h("div");
+    comps.forEach(function (c) {
+      var ds = dayStrip(days || {}, dayGet(c.id), 30);
+      list.appendChild(compRow({ id: c.id, name: c.name, phase: c.phase, online: c.online, sub: subText(c) }, ds.el, ds.pct));
+    });
+    body.appendChild(list);
+    if (minutes && Object.keys(minutes).length) {
+      var host = body;
+      if (minutesInDetails) {
+        host = h("details");
+        host.appendChild(h("summary", null, "直近60分の状態"));
+        body.appendChild(host);
+      } else host.appendChild(secHead("直近60分"));
+      var l2 = h("div");
+      comps.forEach(function (c) {
+        l2.appendChild(compRow({ id: c.id, name: c.name, phase: c.phase, online: c.online }, minStrip(minutes, minGet(c.id), 60), null));
+      });
+      host.appendChild(l2);
+    }
+  }
+
+  function drawMini(box, series) {
+    box.textContent = "";
+    var W = box.clientWidth, H = box.clientHeight;
+    if (!W) return;
+    var m = { l: 38, r: 10, t: 10, b: 24 };
+    var iw = W - m.l - m.r, ih = H - m.t - m.b;
+    var xs = [], maxV = 0;
+    series.forEach(function (x) { x.pts.forEach(function (p) { xs.push(p.x); if (p.v > maxV) maxV = p.v; }); });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    if (x1 === x0) x1 = x0 + 1;
+    var step = niceStep(Math.max(maxV, 1)), yMax = Math.max(step, Math.ceil(maxV / step) * step);
+    var X = function (x) { return m.l + (x - x0) / (x1 - x0) * iw; };
+    var Y = function (v) { return m.t + ih - v / yMax * ih; };
+    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, role: "img" }, box);
+    for (var v = 0; v <= yMax; v += step) {
+      el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: "var(--grid)" }, svg);
+      el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end", "font-size": 10.5, fill: "var(--muted)" }, svg).textContent = v;
+    }
+    for (var i = 0; i <= 3; i++) {
+      var xv = x0 + (x1 - x0) * i / 3, d = new Date(xv);
+      el("text", { x: X(xv), y: H - 6, "text-anchor": i === 0 ? "start" : (i === 3 ? "end" : "middle"), "font-size": 10.5, fill: "var(--muted)" }, svg)
+        .textContent = two(d.getHours()) + ":" + two(d.getMinutes());
+    }
+    series.forEach(function (sr, idx) {
+      var d = sr.pts.map(function (p, k) { return (k ? "L" : "M") + X(p.x).toFixed(1) + " " + Y(p.v).toFixed(1); }).join(" ");
+      el("path", { d: d, fill: "none", stroke: COLORS[idx % COLORS.length], "stroke-width": idx === 0 ? 2.6 : 1.8, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    });
+  }
+  function drawAllMini() { if (popChart) drawMini(popChart.box, popChart.series); }
+
+  /* --- history.json: 全体 --- */
+  function renderHistory(body, d) {
+    var comps = (d.components || []).filter(function (c) {
+      return Object.keys(d.days || {}).some(function (k) { return d.days[k][c.id]; });
+    });
+    var names = {};
+    (d.components || []).forEach(function (c) { names[c.id] = c.name || c.id; });
+
+    var rows = [];
+    if (d.peak) rows.push(["最高同時接続", d.peak.count + " 人（" + fmtDT(d.peak.at) + "）"]);
+    if (d.shield && d.shield.responseMillis != null) rows.push(["DDoS Shield 応答", d.shield.responseMillis + " ms"]);
+    if (d.updatedAt) rows.push(["更新", fmtDT(d.updatedAt)]);
+    if (rows.length) body.appendChild(kv(rows));
+
+    renderComps(body, comps, d.days, d.minutes,
+      function (id) { return function (day) { return day[id]; }; },
+      function (id) { return function (m) { return m[id]; }; }, true);
+
+    // 人数の推移（過去1時間）
+    var pop = Array.isArray(d.population) ? d.population : [];
+    if (pop.length > 1) {
+      body.appendChild(secHead("人数の推移（過去1時間・status.zonsurvival.net 記録）"));
+      var ids = {};
+      pop.forEach(function (p) { Object.keys(p.servers || {}).forEach(function (k) { ids[k] = 1; }); });
+      var series = [{ name: "全体", pts: [] }];
+      Object.keys(ids).forEach(function (k) { series.push({ name: names[k] || k, key: k, pts: [] }); });
+      pop.forEach(function (p) {
+        var x = Date.parse(p.at);
+        if (isNaN(x)) return;
+        series[0].pts.push({ x: x, v: num(p.total) });
+        series.forEach(function (sr) { if (sr.key) sr.pts.push({ x: x, v: num((p.servers || {})[sr.key]) }); });
+      });
+      var box = h("div", "mini");
+      body.appendChild(box);
+      var lg = h("div", "legend");
+      series.forEach(function (sr, i) {
+        var item = h("span"), sw = h("i");
+        sw.style.background = COLORS[i % COLORS.length];
+        item.appendChild(sw);
+        item.appendChild(document.createTextNode(sr.name + ": " + sr.pts[sr.pts.length - 1].v));
+        lg.appendChild(item);
+      });
+      body.appendChild(lg);
+      popChart = { box: box, series: series };
+      drawMini(box, series);
+    }
+    if (d.serverPeaks) {
+      var pr = Object.keys(d.serverPeaks).map(function (k) {
+        var v = d.serverPeaks[k];
+        return [(names[k] || k) + " の最高", v.count + " 人（" + fmtDT(v.at) + "）"];
+      });
+      var det = h("details");
+      det.appendChild(h("summary", null, "サーバー別の最高人数"));
+      det.appendChild(kv(pr));
+      body.appendChild(det);
+    }
+  }
+
+  var EPS = [
+    { path: "/history.json", title: "全体の稼働履歴", render: renderHistory }
+  ];
+  (function buildBlocks() {
+    var root = $("stBlocks");
+    EPS.forEach(function (ep) {
+      var blk = h("div", "blk");
+      blk.appendChild(h("h3", null, ep.title));
+      var body = h("div"); body.appendChild(h("p", "empty", "読み込み中…"));
+      blk.appendChild(body);
+      root.appendChild(blk);
+      ep.body = body;
+    });
+  })();
+
+  async function pollStatusSite() {
+    await Promise.all(EPS.map(async function (ep) {
+      try {
+        var d = await sfetch(ep.path);
+        var fresh = h("div");
+        ep.render(fresh, d);
+        ep.body.textContent = "";
+        while (fresh.firstChild) ep.body.appendChild(fresh.firstChild);
+        if (ep.path === "/history.json") drawAllMini();
+      } catch (e) {
+        ep.body.textContent = "";
+        ep.body.appendChild(h("p", "empty", "取得できませんでした: " + (e && e.message ? e.message : e)));
+      }
+    }));
+  }
+  window.addEventListener("resize", drawAllMini);
+
   /* ---------- 手動更新 ---------- */
   function guarded(fn) {
     var busy = null;
@@ -825,19 +1128,20 @@ a.srv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       return busy;
     };
   }
-  var gPoll = guarded(poll), gZon = guarded(pollZon), gSites = guarded(checkSites);
+  var gPoll = guarded(poll), gZon = guarded(pollZon), gSites = guarded(checkSites), gSt = guarded(pollStatusSite);
   async function refreshAll() {
     var b = $("refreshBtn");
     b.disabled = true; b.classList.add("spin");
-    try { await Promise.all([gPoll(), gZon(), gSites()]); }
+    try { await Promise.all([gPoll(), gZon(), gSites(), gSt()]); }
     finally { b.disabled = false; b.classList.remove("spin"); }
   }
   $("refreshBtn").addEventListener("click", refreshAll);
 
   /* ---------- start ---------- */
   drawChart();
-  gPoll(); gZon(); gSites();
+  gPoll(); gZon(); gSites(); gSt();
   setInterval(function () { gPoll(); gZon(); gSites(); }, POLL_MS);
+  setInterval(function () { gSt(); }, 60000);
 })();
 </script>
 </body>
